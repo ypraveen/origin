@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/http/httputil"
 	"log"
 	"reflect"
 
@@ -80,8 +81,13 @@ type AviSession struct {
 	// optional tenant string to use for API request
 	Tenant string
 
+	// internal: session id for this session
 	sessionid string
+
+	// internal: csrf_token for this session
 	csrf_token string
+
+	// internal: referer field string to use in requests
 	prefix string
 }
 
@@ -106,14 +112,14 @@ func (avisession *AviSession) InitiateSession() error {
 
 	// initiate http session here
 	res, rerror := avisession.rest_request("GET", "", nil)
-	// above sets the csrf token
 
+	// above sets the csrf token
 	// now login to get session_id
 	cred := make(map[string]string)
 	cred["username"] = avisession.username
 	cred["password"] = avisession.password
-
-	res, rerror = avisession.rest_request_payload("POST", "login", cred)
+	res, rerror = avisession.Post("login", cred)
+	// now session id is set too
 
 	log.Println("response: ", res)
 	if (res != nil && reflect.TypeOf(res).Kind() != reflect.String) {
@@ -129,27 +135,10 @@ func (avisession *AviSession) InitiateSession() error {
 
 // rest_request makes a REST request to the Avi Controller's REST
 // API.
-//
-// One of three things can happen as a result of a request:
-//
-// (1) The request succeeds and Avi returns an HTTP 200 response, possibly with
-//     a result payload, which should have the fields defined in the
-//     result argument.  In this case, rest_request decodes the payload into
-//     the result argument and returns nil.
-//
-// (2) The request fails and Avi returns an HTTP 4xx or 5xx response with a
-//     response payload containing a code (which should be the same as the
-//     HTTP response code) and a string message.  In this case, rest_request
-//     decodes the response payload and returns an AviError with the URL, HTTP
-//     verb, HTTP status code, and error information from the response payload.
-//
-// (3) The REST call fails in some other way, such as a socket error or an
-//     error decoding the result payload.  In this case, rest_request returns
-//     an AviError with the URL, HTTP verb, HTTP status code (if any), and error
-//     value.
-func (avi *AviSession) rest_request(verb string, url string, payload io.Reader) (interface{}, error) {
+// Returns a json response (map[string]interface{} type) or string in case of non-json reponse from Avi Controller
+func (avi *AviSession) rest_request(verb string, uri string, payload io.Reader) (interface{}, error) {
 	var result interface{}
-	url = avi.prefix + url
+	url := avi.prefix + uri
 
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: avi.insecure},
@@ -166,7 +155,8 @@ func (avi *AviSession) rest_request(verb string, url string, payload io.Reader) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if avi.csrf_token != "" {
-		req.Header.Set("X-CSRFToken", avi.csrf_token)
+		req.Header["X-CSRFToken"] = []string{ avi.csrf_token }
+		req.AddCookie(&http.Cookie{Name: "csrftoken", Value: avi.csrf_token,})
 	}
 	if avi.prefix != "" {
 		req.Header.Set("Referer", avi.prefix)
@@ -178,6 +168,9 @@ func (avi *AviSession) rest_request(verb string, url string, payload io.Reader) 
 		req.AddCookie(&http.Cookie{Name: "sessionid", Value: avi.sessionid,})
 	}
 
+	dump, err := httputil.DumpRequestOut(req, true)
+	log.Println("Request headers: ", req.Header)
+	debug(dump, err)
 	client := &http.Client{Transport: tr}
 
 	resp, err := client.Do(req)
@@ -195,11 +188,28 @@ func (avi *AviSession) rest_request(verb string, url string, payload io.Reader) 
 		log.Println("cookie: ", cookie)
 		if cookie.Name == "csrftoken" {
 			avi.csrf_token = cookie.Value
+			log.Println("Set the csrf token to ", avi.csrf_token)
 		}
 		if cookie.Name == "sessionid" {
 			avi.sessionid = cookie.Value
 		}
 	}
+	log.Println("Response code: ", resp.StatusCode)
+
+	if resp.StatusCode == 419 {
+		// session got reset; try again
+		return avi.rest_request(verb, uri, payload)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return result, errorResult
+	}
+
+	if resp.StatusCode == 204 {
+		// no content in the response
+		return result, nil
+	}
+
 	resbytes, _ := ioutil.ReadAll(resp.Body)
 	err = json.Unmarshal(resbytes, &result)
 	if err != nil {
@@ -209,6 +219,14 @@ func (avi *AviSession) rest_request(verb string, url string, payload io.Reader) 
 	}
 
 	return result, nil
+}
+
+func debug(data []byte, err error) {
+    if err == nil {
+        fmt.Printf("%s\n\n", data)
+    } else {
+        log.Fatalf("%s\n\n", err)
+    }
 }
 
 // rest_request_payload is a helper for avi operations that take
@@ -226,23 +244,16 @@ func (avi *AviSession) rest_request_payload(verb string, url string,
 }
 
 // get issues a GET request against the avi REST API.
-func (avi *AviSession) Get(url string) (interface{}, error) {
-	return avi.rest_request("GET", url, nil)
+func (avi *AviSession) Get(uri string) (interface{}, error) {
+	return avi.rest_request("GET", uri, nil)
 }
 
-/*
 // post issues a POST request against the avi REST API.
-func (avi *AviSession) post(url string, payload interface{}, result interface{}) error {
-	return avi.rest_request_payload("POST", url, payload, result)
-}
-
-// patch issues a PATCH request against the avi REST API.
-func (avi *AviSession) patch(url string, payload interface{}, result interface{}) error {
-	return avi.rest_request_payload("PATCH", url, payload, result)
+func (avi *AviSession) Post(uri string, payload interface{}) (interface{}, error) {
+	return avi.rest_request_payload("POST", uri, payload)
 }
 
 // delete issues a DELETE request against the avi REST API.
-func (avi *AviSession) delete(url string, result interface{}) error {
-	return avi.rest_request("DELETE", url, nil, result)
+func (avi *AviSession) Delete(uri string) (interface{}, error) {
+	return avi.rest_request("DELETE", uri, nil)
 }
-*/
