@@ -253,6 +253,11 @@ func (avi *AviSession) Post(uri string, payload interface{}) (interface{}, error
 	return avi.rest_request_payload("POST", uri, payload)
 }
 
+// put issues a PUT request against the avi REST API.
+func (avi *AviSession) Put(uri string, payload interface{}) (interface{}, error) {
+	return avi.rest_request_payload("PUT", uri, payload)
+}
+
 // delete issues a DELETE request against the avi REST API.
 func (avi *AviSession) Delete(uri string) (interface{}, error) {
 	return avi.rest_request("DELETE", uri, nil)

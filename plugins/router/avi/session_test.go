@@ -7,7 +7,7 @@ import (
 	//"time"
 )
 
-func TestTest(t *testing.T) {
+func TestAviSession(t *testing.T) {
 	avisess := NewAviSession("10.10.25.201", "admin", "avi123", true)
 	avisess.InitiateSession()
 
@@ -62,5 +62,36 @@ func TestTest(t *testing.T) {
 		return
 	}
 
+	t.Error("Just to force output")
+}
+
+func TestAviPlugin(t *testing.T) {
+	avi, err := NewAviPlugin(AviPluginConfig{
+		Host: "10.10.25.201",
+		Username: "admin",
+		Password: "avi123",
+		Insecure: true,
+	})
+	if err != nil {
+		t.Errorf("Creating plugin failed %s", err)
+		return
+	}
+	err = avi.EnsurePoolExists("testpool")
+	if err != nil {
+		t.Errorf("Pool Creation failed %s", err)
+		return
+	}
+	nmembers := make(map[string]int)
+	nmembers["10.10.30.40"] = 80
+	err = avi.UpdatePoolMembers("testpool", nmembers)
+	if err != nil {
+		t.Errorf("Pool update failed %s", err)
+		return
+	}
+	err = avi.DeletePool("testpool")
+	if err != nil {
+		t.Errorf("Pool update failed %s", err)
+		return
+	}
 	t.Error("Just to force output")
 }
