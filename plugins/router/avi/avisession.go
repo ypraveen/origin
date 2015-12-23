@@ -202,6 +202,7 @@ func (avi *AviSession) rest_request(verb string, uri string, payload io.Reader) 
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		log.Println("Error: ", resp)
 		return result, errorResult
 	}
 
