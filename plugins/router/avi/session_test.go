@@ -65,7 +65,7 @@ func TestAviSession(t *testing.T) {
 	t.Error("Just to force output")
 }
 
-func TestAviPlugin(t *testing.T) {
+func TestAviPluginPoolFunctions(t *testing.T) {
 	avi, err := NewAviPlugin(AviPluginConfig{
 		Host: "10.10.25.201",
 		Username: "admin",
@@ -76,7 +76,7 @@ func TestAviPlugin(t *testing.T) {
 		t.Errorf("Creating plugin failed %s", err)
 		return
 	}
-	err = avi.EnsurePoolExists("testpool")
+	_, err = avi.EnsurePoolExists("testpool")
 	if err != nil {
 		t.Errorf("Pool Creation failed %s", err)
 		return
@@ -91,6 +91,31 @@ func TestAviPlugin(t *testing.T) {
 	err = avi.DeletePool("testpool")
 	if err != nil {
 		t.Errorf("Pool update failed %s", err)
+		return
+	}
+	t.Error("Just to force output")
+}
+
+func TestAviPlugin(t *testing.T){
+	avi, err := NewAviPlugin(AviPluginConfig{
+		Host: "10.10.25.201",
+		Username: "admin",
+		Password: "avi123",
+		Insecure: true,
+		VSname: "openshift_router",
+	})
+	if err != nil {
+		t.Errorf("Creating plugin failed %s", err)
+		return
+	}
+	err = avi.AddInsecureRoute("test", "test", "test.com", "")
+	if err != nil {
+		t.Errorf("Creating insecure route failed %s", err)
+		return
+	}
+	err = avi.DeleteInsecureRoute("test")
+	if err != nil {
+		t.Errorf("Deleting insecure route failed %s", err)
 		return
 	}
 	t.Error("Just to force output")
