@@ -55,6 +55,8 @@ func CommandFor(basename string) *cobra.Command {
 		cmd = irouter.NewCommandTemplateRouter(basename)
 	case "openshift-f5-router":
 		cmd = irouter.NewCommandF5Router(basename)
+	case "openshift-avi-router":
+		cmd = irouter.NewCommandAviRouter(basename)
 	case "openshift-deploy":
 		cmd = deployer.NewCommandDeployer(basename)
 	case "openshift-sti-build":
@@ -121,6 +123,7 @@ func NewCommandOpenShift(name string) *cobra.Command {
 	infra.AddCommand(
 		irouter.NewCommandTemplateRouter("router"),
 		irouter.NewCommandF5Router("f5-router"),
+		irouter.NewCommandAviRouter("avi-router"),
 		deployer.NewCommandDeployer("deploy"),
 		builder.NewCommandSTIBuilder("sti-build"),
 		builder.NewCommandDockerBuilder("docker-build"),
