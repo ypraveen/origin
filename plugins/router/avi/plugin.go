@@ -112,7 +112,7 @@ func getPoolMembers(pool interface{}) map[string]int {
 		if server["port"] != nil {
 			serverport = int(server["port"].(float64))
 		}
-		members[server["ip"].(map[string]string)["addr"]] = serverport
+		members[server["ip"].(map[string]interface{})["addr"].(string)] = serverport
 	}
 	return members
 }
