@@ -1,9 +1,9 @@
 package avi
 
 import (
-	"testing"
 	"log"
 	"reflect"
+	"testing"
 	//"time"
 )
 
@@ -67,7 +67,7 @@ func TestAviSession(t *testing.T) {
 
 func TestAviPluginPoolFunctions(t *testing.T) {
 	avi, err := NewAviPlugin(AviPluginConfig{
-		Host: "10.10.25.201",
+		Host:     "10.10.25.201",
 		Username: "admin",
 		Password: "avi123",
 		Insecure: true,
@@ -96,13 +96,13 @@ func TestAviPluginPoolFunctions(t *testing.T) {
 	t.Error("Just to force output")
 }
 
-func TestAviPlugin(t *testing.T){
+func TestAviPlugin(t *testing.T) {
 	avi, err := NewAviPlugin(AviPluginConfig{
-		Host: "10.10.25.201",
+		Host:     "10.10.25.201",
 		Username: "admin",
 		Password: "avi123",
 		Insecure: true,
-		VSname: "openshift_router",
+		VSname:   "openshift_router",
 	})
 	if err != nil {
 		t.Errorf("Creating plugin failed %s", err)
