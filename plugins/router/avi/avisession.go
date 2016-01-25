@@ -111,9 +111,9 @@ func (avisession *AviSession) InitiateSession() error {
 	}
 
 	// initiate http session here
-	res, rerror := avisession.rest_request("GET", "", nil)
+	// first set the csrf token
+	res, rerror := avisession.Get("")
 
-	// above sets the csrf token
 	// now login to get session_id
 	cred := make(map[string]string)
 	cred["username"] = avisession.username
@@ -133,11 +133,10 @@ func (avisession *AviSession) InitiateSession() error {
 // Helper routines for REST calls.
 //
 
-// rest_request makes a REST request to the Avi Controller's REST
-// API.
-// Returns a json response (map[string]interface{} type) or string in case of non-json reponse from Avi Controller
-func (avi *AviSession) rest_request(verb string, uri string, payload io.Reader) (interface{}, error) {
-	var result interface{}
+// rest_request makes a REST request to the Avi Controller's REST API.
+// Returns a byte[] if successful
+func (avi *AviSession) rest_request(verb string, uri string, payload interface{}) ([]byte, error) {
+	var result []byte
 	url := avi.prefix + uri
 
 	tr := &http.Transport{
@@ -146,7 +145,16 @@ func (avi *AviSession) rest_request(verb string, uri string, payload io.Reader) 
 
 	errorResult := AviError{verb: verb, url: url}
 
-	req, err := http.NewRequest(verb, url, payload)
+	var payloadIO io.Reader
+	if payload != nil {
+		jsonStr, err := json.Marshal(payload)
+		if err != nil {
+			return result, AviError{verb: verb, url: url, err: err}
+		}
+		payloadIO = bytes.NewBuffer(jsonStr)
+	}
+
+	req, err := http.NewRequest(verb, url, payloadIO)
 	if err != nil {
 		errorResult.err = fmt.Errorf("http.NewRequest failed: %v", err)
 		return result, errorResult
@@ -211,15 +219,14 @@ func (avi *AviSession) rest_request(verb string, uri string, payload io.Reader) 
 		return result, nil
 	}
 
-	resbytes, _ := ioutil.ReadAll(resp.Body)
-	err = json.Unmarshal(resbytes, &result)
-	if err != nil {
-		log.Println(err)
-		// non json response
-		result = string(resbytes)
-	}
+	result, err = ioutil.ReadAll(resp.Body)
+	return result, err
+}
 
-	return result, nil
+func ConvertAviResponseToMapInterface(resbytes []byte) (interface{}, error) {
+	var result interface{}
+	err := json.Unmarshal(resbytes, &result)
+	return result, err
 }
 
 func debug(data []byte, err error) {
@@ -230,36 +237,31 @@ func debug(data []byte, err error) {
 	}
 }
 
-// rest_request_payload is a helper for avi operations that take
-// a payload.
-func (avi *AviSession) rest_request_payload(verb string, url string,
-	payload interface{}) (interface{}, error) {
-	jsonStr, err := json.Marshal(payload)
-	if err != nil {
-		return "", AviError{verb: verb, url: url, err: err}
+func (avi *AviSession) rest_request_interface_response(verb string, url string,
+    payload interface{}) (interface{}, error) {
+	res, rerror := avi.rest_request(verb, url, payload)
+	if rerror != nil || res == nil {
+		return res, rerror
 	}
-
-	encodedPayload := bytes.NewBuffer(jsonStr)
-
-	return avi.rest_request(verb, url, encodedPayload)
+	return ConvertAviResponseToMapInterface(res)
 }
 
 // get issues a GET request against the avi REST API.
 func (avi *AviSession) Get(uri string) (interface{}, error) {
-	return avi.rest_request("GET", uri, nil)
+	return avi.rest_request_interface_response("GET", uri, nil)
 }
 
 // post issues a POST request against the avi REST API.
 func (avi *AviSession) Post(uri string, payload interface{}) (interface{}, error) {
-	return avi.rest_request_payload("POST", uri, payload)
+	return avi.rest_request_interface_response("POST", uri, payload)
 }
 
 // put issues a PUT request against the avi REST API.
 func (avi *AviSession) Put(uri string, payload interface{}) (interface{}, error) {
-	return avi.rest_request_payload("PUT", uri, payload)
+	return avi.rest_request_interface_response("PUT", uri, payload)
 }
 
 // delete issues a DELETE request against the avi REST API.
 func (avi *AviSession) Delete(uri string) (interface{}, error) {
-	return avi.rest_request("DELETE", uri, nil)
+	return avi.rest_request_interface_response("DELETE", uri, nil)
 }
