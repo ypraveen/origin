@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httputil"
-	"log"
 	"reflect"
 
 	"github.com/golang/glog"
@@ -93,7 +93,7 @@ type AviSession struct {
 
 func NewAviSession(host string, username string, password string, insecure bool) *AviSession {
 	avisess := &AviSession{
-		host: host,
+		host:     host,
 		username: username,
 		password: password,
 		insecure: insecure,
@@ -122,7 +122,7 @@ func (avisession *AviSession) InitiateSession() error {
 	// now session id is set too
 
 	log.Println("response: ", res)
-	if (res != nil && reflect.TypeOf(res).Kind() != reflect.String) {
+	if res != nil && reflect.TypeOf(res).Kind() != reflect.String {
 		println("results: ", res.(map[string]interface{}), " error: ", rerror)
 	}
 
@@ -155,8 +155,8 @@ func (avi *AviSession) rest_request(verb string, uri string, payload io.Reader) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if avi.csrf_token != "" {
-		req.Header["X-CSRFToken"] = []string{ avi.csrf_token }
-		req.AddCookie(&http.Cookie{Name: "csrftoken", Value: avi.csrf_token,})
+		req.Header["X-CSRFToken"] = []string{avi.csrf_token}
+		req.AddCookie(&http.Cookie{Name: "csrftoken", Value: avi.csrf_token})
 	}
 	if avi.prefix != "" {
 		req.Header.Set("Referer", avi.prefix)
@@ -165,7 +165,7 @@ func (avi *AviSession) rest_request(verb string, uri string, payload io.Reader) 
 		req.Header.Set("X-Avi-Tenant", avi.Tenant)
 	}
 	if avi.sessionid != "" {
-		req.AddCookie(&http.Cookie{Name: "sessionid", Value: avi.sessionid,})
+		req.AddCookie(&http.Cookie{Name: "sessionid", Value: avi.sessionid})
 	}
 
 	dump, err := httputil.DumpRequestOut(req, true)
@@ -223,11 +223,11 @@ func (avi *AviSession) rest_request(verb string, uri string, payload io.Reader) 
 }
 
 func debug(data []byte, err error) {
-    if err == nil {
-        fmt.Printf("%s\n\n", data)
-    } else {
-        log.Fatalf("%s\n\n", err)
-    }
+	if err == nil {
+		fmt.Printf("%s\n\n", data)
+	} else {
+		log.Fatalf("%s\n\n", err)
+	}
 }
 
 // rest_request_payload is a helper for avi operations that take

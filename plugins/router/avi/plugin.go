@@ -1,8 +1,8 @@
 package avi
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 
 	"github.com/golang/glog"
@@ -51,7 +51,7 @@ func NewAviPlugin(cfg AviPluginConfig) (*AviPlugin, error) {
 }
 
 type AviResult struct {
-	count int
+	count   int
 	results []map[string]interface{}
 }
 
@@ -59,11 +59,11 @@ func convertAviResponseToAviResult(res interface{}) *AviResult {
 	resp := res.(map[string]interface{})
 	_results := resp["results"].([]interface{})
 	results := make([]map[string]interface{}, 0)
-	for _, res := range _results{
+	for _, res := range _results {
 		results = append(results, res.(map[string]interface{}))
 	}
 	return &AviResult{
-		count: int(resp["count"].(float64)),
+		count:   int(resp["count"].(float64)),
 		results: results,
 	}
 }
@@ -151,14 +151,13 @@ func (p *AviPlugin) UpdatePoolMembers(poolname string, new_members map[string]in
 	}
 	pool["servers"] = nmembers
 	glog.Errorf("pool after assignment: %s", pool)
-	res, err = p.AviSess.Put("/api/pool/" + pool_uuid, pool)
+	res, err = p.AviSess.Put("/api/pool/"+pool_uuid, pool)
 	if err != nil {
 		glog.V(4).Infof("Avi update Pool failed: %v", res)
 		return err
 	}
 	return nil
 }
-
 
 func (p *AviPlugin) UpdatePool(poolname string, endpoints *kapi.Endpoints) error {
 	new_members := make(map[string]int)
@@ -197,8 +196,6 @@ func (p *AviPlugin) DeletePool(poolname string) error {
 	}
 	return nil
 }
-
-
 
 // deletePoolIfEmpty deletes the named pool from Avi if, and only if, it
 // has no members.
@@ -310,7 +307,7 @@ func (p *AviPlugin) GetVirtualService() (map[string]interface{}, error) {
 }
 
 func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, poolref, hostname,
-    pathname string) (map[string]interface{}, error) {
+	pathname string) (map[string]interface{}, error) {
 	http_policy_set := make(map[string]interface{})
 	res, err := p.AviSess.Get("/api/httppolicyset?name=" + routename)
 	if err != nil {
@@ -369,11 +366,11 @@ func (p *AviPlugin) AddPolicySet(http_policy_set map[string]interface{}, routena
 	}
 
 	vs["http_policies"] = append(vs["http_policies"].([]interface{}),
-	                      map[string]interface{}{
-							  "index": hash(routename) & 0xffffff,
-							  "http_policy_set_ref": http_policy_set["url"].(string),
-						  })
-	res, err := p.AviSess.Put("/api/virtualservice/" + vs["uuid"].(string), vs)
+		map[string]interface{}{
+			"index":               hash(routename) & 0xffffff,
+			"http_policy_set_ref": http_policy_set["url"].(string),
+		})
+	res, err := p.AviSess.Put("/api/virtualservice/"+vs["uuid"].(string), vs)
 	if err != nil {
 		glog.V(4).Info("HTTP Policy Set addition to vs failed: %v", res)
 		return err
@@ -430,7 +427,7 @@ func (p *AviPlugin) DeleteInsecureRoute(routename string) error {
 		}
 		if found == true {
 			vs["http_policies"] = new_policies
-			res, err := p.AviSess.Put("/api/virtualservice/" + vs["uuid"].(string), vs)
+			res, err := p.AviSess.Put("/api/virtualservice/"+vs["uuid"].(string), vs)
 			if err != nil {
 				glog.V(4).Info("HTTP Policy Set addition to vs failed: %v", res)
 				return err
