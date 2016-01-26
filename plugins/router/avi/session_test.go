@@ -7,7 +7,7 @@ import (
 	//"time"
 )
 
-func TestAviSession(t *testing.T) {
+func _TestAviSession(t *testing.T) {
 	avisess := NewAviSession("10.10.25.201", "admin", "avi123", true)
 	avisess.InitiateSession()
 
@@ -65,7 +65,7 @@ func TestAviSession(t *testing.T) {
 	t.Error("Just to force output")
 }
 
-func TestAviPluginPoolFunctions(t *testing.T) {
+func _TestAviPluginPoolFunctions(t *testing.T) {
 	avi, err := NewAviPlugin(AviPluginConfig{
 		Host:     "10.10.25.201",
 		Username: "admin",

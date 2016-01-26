@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	avip "./protobuf"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/golang/glog"
 	kapi "k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/util/sets"
@@ -70,49 +72,39 @@ func convertAviResponseToAviResult(res interface{}) *AviResult {
 
 // ensurePoolExists checks whether the named pool already exists in Avi
 // and creates it if it does not.
-func (p *AviPlugin) EnsurePoolExists(poolname string) (map[string]interface{}, error) {
-	resp := make(map[string]interface{})
-	res, err := p.AviSess.Get("/api/pool?name=" + poolname)
+func (p *AviPlugin) EnsurePoolExists(poolname string) (avip.Pool, error) {
+	res, err := p.AviSess.GetCollection("/api/pool?name=" + poolname)
+	var rpool avip.Pool
 	if err != nil {
 		glog.V(4).Infof("Avi PoolExists check failed: %v", res)
-		return resp, err
+		return rpool, err
 	}
-	avires := convertAviResponseToAviResult(res)
-
-	if avires.count == 0 {
-		pool := make(map[string]string)
-		pool["name"] = poolname
-		res, err = p.AviSess.Post("/api/pool", pool)
+	var resbytes []byte
+	if res.Count == 0 {
+		pool := avip.Pool{Name: &poolname}
+		resbytes, err = p.AviSess.PostRaw("/api/pool", pool)
 		if err != nil {
-			glog.V(4).Infof("Error creating pool %s: %v", poolname, res)
-			return resp, err
+			glog.V(4).Infof("Error creating pool %s: %v", poolname, string(resbytes))
+			return rpool, err
 		}
 	} else {
-		res = avires.results[0]
+		resbytes = res.Results[0]
 	}
-
-	return res.(map[string]interface{}), nil
+	err = ConvertBytesToSpecificInterface(resbytes, &rpool)
+	return rpool, err
 }
 
-func getPoolMembers(pool interface{}) map[string]int {
+func getPoolMembers(pool avip.Pool) map[string]int {
 	members := make(map[string]int)
-	pooldict := pool.(map[string]interface{})
-	if pooldict["servers"] == nil {
+	if pool.Servers == nil {
 		return members
 	}
-	_servers := pooldict["servers"].([]interface{})
-	servers := make([]map[string]interface{}, 0)
-	for _, server := range _servers {
-		servers = append(servers, server.(map[string]interface{}))
-	}
-	defport := int(pooldict["default_server_port"].(float64))
-	serverport := defport
-	for _, server := range servers {
-		serverport = defport
-		if server["port"] != nil {
-			serverport = int(server["port"].(float64))
+	for _, server := range pool.Servers {
+		serverport := *pool.DefaultServerPort
+		if *server.Port != 0 {
+			serverport = *server.Port
 		}
-		members[server["ip"].(map[string]interface{})["addr"].(string)] = serverport
+		members[*server.Ip.Addr] = int(serverport)
 	}
 	return members
 }
@@ -120,15 +112,7 @@ func getPoolMembers(pool interface{}) map[string]int {
 // updatePool update the named pool (which must already exist in Avi) with
 // the given endpoints.
 func (p *AviPlugin) UpdatePoolMembers(poolname string, new_members map[string]int) error {
-	res, err := p.AviSess.Get("/api/pool?name=" + poolname)
-	if err != nil {
-		glog.V(4).Infof("Avi GetPool failed: %v", res)
-		return err
-	}
-	glog.Errorf("pool -- res: %s", res)
-	poolres := convertAviResponseToAviResult(res)
-	pool := poolres.results[0]
-	glog.Errorf("pool: %s", pool)
+	pool, err := p.EnsurePoolExists(poolname)
 	current_members := getPoolMembers(pool)
 
 	if reflect.DeepEqual(current_members, new_members) {
@@ -137,21 +121,20 @@ func (p *AviPlugin) UpdatePoolMembers(poolname string, new_members map[string]in
 	}
 
 	// new members not same as the old one; just do a new pool update with new members
-	pool_uuid := pool["uuid"].(string)
-	nmembers := make([]interface{}, 0)
+	nmembers := make ([]*avip.Server, 0)
 	for memberip, memberport := range new_members {
-		server := make(map[string]interface{})
-		ip := make(map[string]interface{})
-		ip["type"] = "V4"
-		ip["addr"] = memberip
-		server["ip"] = ip
-		server["port"] = memberport
-		nmembers = append(nmembers, server)
+		server := avip.Server{
+			Ip: &avip.IpAddr{
+				Addr: proto.String(memberip),
+				Type: avip.IpAddrType_V4.Enum()},
+			Port: proto.Int32(int32(memberport)),
+		}
+		nmembers = append(nmembers, &server)
 		glog.Errorf("nmbers in loop: %s", nmembers)
 	}
-	pool["servers"] = nmembers
+	pool.Servers = nmembers
 	glog.Errorf("pool after assignment: %s", pool)
-	res, err = p.AviSess.Put("/api/pool/"+pool_uuid, pool)
+	res, err := p.AviSess.Put("/api/pool/" + *pool.Uuid, pool)
 	if err != nil {
 		glog.V(4).Infof("Avi update Pool failed: %v", res)
 		return err
@@ -174,24 +157,25 @@ func (p *AviPlugin) UpdatePool(poolname string, endpoints *kapi.Endpoints) error
 
 // deletePool delete the named pool from Avi.
 func (p *AviPlugin) DeletePool(poolname string) error {
-	res, err := p.AviSess.Get("/api/pool?name=" + poolname)
+	res, err := p.AviSess.GetCollection("/api/pool?name=" + poolname)
+	var rpool avip.Pool
 	if err != nil {
 		glog.V(4).Infof("Avi PoolExists check failed: %v", res)
 		return err
 	}
-	poolres := convertAviResponseToAviResult(res)
-
-	if poolres.count == 0 {
+	if res.Count == 0 {
 		glog.V(4).Infof("pool does not exist!: %v", res)
 		return nil
 	}
-	glog.Errorf("pool: %s", poolres)
-	pool := poolres.results[0]
-	pool_uuid := pool["uuid"].(string)
-
-	res, err = p.AviSess.Delete("/api/pool/" + pool_uuid)
+	err = ConvertBytesToSpecificInterface(res.Results[0], &rpool)
 	if err != nil {
-		glog.V(4).Infof("Error deleting pool %s: %v", poolname, res)
+		glog.V(4).Infof("Could not convert raw string to pool pb: %v", err)
+		return err
+	}
+
+	nres, err := p.AviSess.Delete("/api/pool/" + *rpool.Uuid)
+	if err != nil {
+		glog.V(4).Infof("Error deleting pool %s: %v", poolname, nres)
 		return err
 	}
 	return nil
@@ -200,21 +184,29 @@ func (p *AviPlugin) DeletePool(poolname string) error {
 // deletePoolIfEmpty deletes the named pool from Avi if, and only if, it
 // has no members.
 func (p *AviPlugin) DeletePoolIfEmpty(poolname string) error {
-	res, err := p.AviSess.Get("/api/pool?name=" + poolname)
+	res, err := p.AviSess.GetCollection("/api/pool?name=" + poolname)
+	var rpool avip.Pool
 	if err != nil {
 		glog.V(4).Infof("Avi PoolExists check failed: %v", res)
 		return err
 	}
-	poolres := convertAviResponseToAviResult(res)
-
-	if poolres.count == 0 {
+	if res.Count == 0 {
 		glog.V(4).Infof("pool does not exist!: %v", res)
 		return nil
 	}
+	err = ConvertBytesToSpecificInterface(res.Results[0], &rpool)
+	if err != nil {
+		glog.V(4).Infof("Could not convert raw string to pool pb: %v", err)
+		return err
+	}
 
-	members := getPoolMembers(poolres.results[0])
+	members := getPoolMembers(rpool)
 	if len(members) == 0 {
-		return p.DeletePool(poolname)
+		nres, err := p.AviSess.Delete("/api/pool/" + *rpool.Uuid)
+		if err != nil {
+			glog.V(4).Infof("Error deleting pool %s: %v", poolname, nres)
+			return err
+		}
 	}
 	return nil
 }
@@ -306,7 +298,7 @@ func (p *AviPlugin) GetVirtualService() (map[string]interface{}, error) {
 	return avires.results[0], nil
 }
 
-func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, poolref, hostname,
+func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, pooluuid, hostname,
 	pathname string) (map[string]interface{}, error) {
 	http_policy_set := make(map[string]interface{})
 	res, err := p.AviSess.Get("/api/httppolicyset?name=" + routename)
@@ -326,9 +318,9 @@ func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, poolref, hostname,
 		"value": [{"str": "%s"}], "match_criteria": "HDR_EQUALS"}},
 		"switching_action": {"action": "HTTP_SWITCHING_SELECT_POOL",
 		"status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_200",
-		"pool_ref": "%s"}}]}, "is_internal_policy": false
+		"pool_uuid": "%s"}}]}, "is_internal_policy": false
 		}`
-		jsonstr = fmt.Sprintf(jsonstr, routename, routename, pathname, hostname, poolref)
+		jsonstr = fmt.Sprintf(jsonstr, routename, routename, pathname, hostname, pooluuid)
 		json.Unmarshal([]byte(jsonstr), &http_policy_set)
 		res, err = p.AviSess.Post("/api/httppolicyset", http_policy_set)
 		if err != nil {
@@ -386,7 +378,7 @@ func (p *AviPlugin) AddInsecureRoute(routename, poolname, hostname, pathname str
 	}
 
 	// create a new http policy set for this vs
-	http_policy_set, err := p.EnsureHTTPPolicySetExists(routename, pool["url"].(string),
+	http_policy_set, err := p.EnsureHTTPPolicySetExists(routename, *pool.Uuid,
 		hostname, pathname)
 	if err != nil {
 		return err

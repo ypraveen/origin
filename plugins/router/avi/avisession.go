@@ -229,6 +229,16 @@ func ConvertAviResponseToMapInterface(resbytes []byte) (interface{}, error) {
 	return result, err
 }
 
+type AviCollectionResult struct {
+	Count   int
+	Results []json.RawMessage
+}
+
+func ConvertBytesToSpecificInterface(resbytes []byte, result interface{}) error {
+	err := json.Unmarshal(resbytes, result)
+	return err
+}
+
 func debug(data []byte, err error) {
 	if err == nil {
 		fmt.Printf("%s\n\n", data)
@@ -264,4 +274,20 @@ func (avi *AviSession) Put(uri string, payload interface{}) (interface{}, error)
 // delete issues a DELETE request against the avi REST API.
 func (avi *AviSession) Delete(uri string) (interface{}, error) {
 	return avi.rest_request_interface_response("DELETE", uri, nil)
+}
+
+// get issues a GET request against the avi REST API.
+func (avi *AviSession) GetCollection(uri string) (AviCollectionResult, error) {
+	var result AviCollectionResult
+	res, rerror := avi.rest_request("GET", uri, nil)
+	if rerror != nil || res == nil {
+		return result, rerror
+	}
+	// err := ConvertBytesToSpecificInterface(res, &result)
+	err := json.Unmarshal(res, &result)
+	return result, err
+}
+
+func (avi *AviSession) PostRaw(uri string, payload interface{}) ([]byte, error) {
+	return avi.rest_request("POST", uri, payload)
 }
