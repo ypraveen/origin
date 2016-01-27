@@ -68,30 +68,44 @@ func convertAviResponseToAviResult(res interface{}) *AviResult {
 	}
 }
 
-// ensurePoolExists checks whether the named pool already exists in Avi
-// and creates it if it does not.
-func (p *AviPlugin) EnsurePoolExists(poolname string) (map[string]interface{}, error) {
-	resp := make(map[string]interface{})
-	res, err := p.AviSess.Get("/api/pool?name=" + poolname)
+// checks if pool exists: returns the pool, else some error
+func (p *AviPlugin) CheckPoolExists(poolname string) (bool, map[string]interface{}, error) {
+	var resp map[string]interface{}
+
+	res, err := p.AviSess.GetCollection("/api/pool?name=" + poolname)
 	if err != nil {
 		glog.V(4).Infof("Avi PoolExists check failed: %v", res)
+		return false, resp, err
+	}
+
+	if res.Count == 0 {
+		return false, resp, nil
+	}
+	nres, err := ConvertAviResponseToMapInterface(res.Results[0])
+	if err != nil {
+		return true, resp, err
+	}
+	return true, nres.(map[string]interface{}), nil
+}
+
+func (p *AviPlugin) CreatePool(poolname string) (map[string]interface{}, error) {
+	var resp map[string]interface{}
+	pool := make(map[string]string)
+	pool["name"] = poolname
+	pres, err := p.AviSess.Post("/api/pool", pool)
+	if err != nil {
+		glog.V(4).Infof("Error creating pool %s: %v", poolname, pres)
 		return resp, err
 	}
-	avires := convertAviResponseToAviResult(res)
+	return pres.(map[string]interface{}), nil
+}
 
-	if avires.count == 0 {
-		pool := make(map[string]string)
-		pool["name"] = poolname
-		res, err = p.AviSess.Post("/api/pool", pool)
-		if err != nil {
-			glog.V(4).Infof("Error creating pool %s: %v", poolname, res)
-			return resp, err
-		}
-	} else {
-		res = avires.results[0]
+func (p *AviPlugin) EnsurePoolExists(poolname string) (map[string]interface{}, error) {
+	exists, resp, err := p.CheckPoolExists(poolname)
+	if exists || err != nil {
+		return resp, err
 	}
-
-	return res.(map[string]interface{}), nil
+	return p.CreatePool(poolname)
 }
 
 func getPoolMembers(pool interface{}) map[string]int {
@@ -120,15 +134,10 @@ func getPoolMembers(pool interface{}) map[string]int {
 // updatePool update the named pool (which must already exist in Avi) with
 // the given endpoints.
 func (p *AviPlugin) UpdatePoolMembers(poolname string, new_members map[string]int) error {
-	res, err := p.AviSess.Get("/api/pool?name=" + poolname)
+	pool, err := p.EnsurePoolExists(poolname)
 	if err != nil {
-		glog.V(4).Infof("Avi GetPool failed: %v", res)
 		return err
 	}
-	glog.Errorf("pool -- res: %s", res)
-	poolres := convertAviResponseToAviResult(res)
-	pool := poolres.results[0]
-	glog.Errorf("pool: %s", pool)
 	current_members := getPoolMembers(pool)
 
 	if reflect.DeepEqual(current_members, new_members) {
@@ -151,7 +160,7 @@ func (p *AviPlugin) UpdatePoolMembers(poolname string, new_members map[string]in
 	}
 	pool["servers"] = nmembers
 	glog.Errorf("pool after assignment: %s", pool)
-	res, err = p.AviSess.Put("/api/pool/"+pool_uuid, pool)
+	res, err := p.AviSess.Put("/api/pool/"+pool_uuid, pool)
 	if err != nil {
 		glog.V(4).Infof("Avi update Pool failed: %v", res)
 		return err
@@ -174,22 +183,14 @@ func (p *AviPlugin) UpdatePool(poolname string, endpoints *kapi.Endpoints) error
 
 // deletePool delete the named pool from Avi.
 func (p *AviPlugin) DeletePool(poolname string) error {
-	res, err := p.AviSess.Get("/api/pool?name=" + poolname)
-	if err != nil {
-		glog.V(4).Infof("Avi PoolExists check failed: %v", res)
+	exists, pool, err := p.CheckPoolExists(poolname)
+	if err != nil || !exists {
+		glog.V(4).Infof("pool does not exist or can't obtain!: %v", pool)
 		return err
 	}
-	poolres := convertAviResponseToAviResult(res)
-
-	if poolres.count == 0 {
-		glog.V(4).Infof("pool does not exist!: %v", res)
-		return nil
-	}
-	glog.Errorf("pool: %s", poolres)
-	pool := poolres.results[0]
 	pool_uuid := pool["uuid"].(string)
 
-	res, err = p.AviSess.Delete("/api/pool/" + pool_uuid)
+	res, err := p.AviSess.Delete("/api/pool/" + pool_uuid)
 	if err != nil {
 		glog.V(4).Infof("Error deleting pool %s: %v", poolname, res)
 		return err
@@ -200,21 +201,20 @@ func (p *AviPlugin) DeletePool(poolname string) error {
 // deletePoolIfEmpty deletes the named pool from Avi if, and only if, it
 // has no members.
 func (p *AviPlugin) DeletePoolIfEmpty(poolname string) error {
-	res, err := p.AviSess.Get("/api/pool?name=" + poolname)
-	if err != nil {
-		glog.V(4).Infof("Avi PoolExists check failed: %v", res)
+	exists, pool, err := p.CheckPoolExists(poolname)
+	if !exists || err != nil {
+		glog.V(4).Infof("pool does not exist or can't obtain!: %v", pool)
 		return err
 	}
-	poolres := convertAviResponseToAviResult(res)
 
-	if poolres.count == 0 {
-		glog.V(4).Infof("pool does not exist!: %v", res)
-		return nil
-	}
-
-	members := getPoolMembers(poolres.results[0])
+	members := getPoolMembers(pool)
 	if len(members) == 0 {
-		return p.DeletePool(poolname)
+		pool_uuid := pool["uuid"].(string)
+		res, err := p.AviSess.Delete("/api/pool/" + pool_uuid)
+		if err != nil {
+			glog.V(4).Infof("Error deleting pool %s: %v", poolname, res)
+			return err
+		}
 	}
 	return nil
 }
