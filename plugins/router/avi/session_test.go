@@ -62,7 +62,7 @@ func TestAviSession(t *testing.T) {
 		return
 	}
 
-	t.Error("Just to force output")
+	//t.Error("Just to force output")
 }
 
 func TestAviPluginPoolFunctions(t *testing.T) {
@@ -88,12 +88,24 @@ func TestAviPluginPoolFunctions(t *testing.T) {
 		t.Errorf("Pool update failed %s", err)
 		return
 	}
+	nmembers["10.10.30.50"] = 80
+	err = avi.UpdatePoolMembers("testpool", nmembers)
+	if err != nil {
+		t.Errorf("Pool update failed %s", err)
+		return
+	}
+	err = avi.DeletePoolIfEmpty("testpool")
+	exists, _, _ := avi.CheckPoolExists("testpool")
+	if !exists {
+		t.Errorf("Pool delete should have failed as it is not empty")
+		return
+	}
 	err = avi.DeletePool("testpool")
 	if err != nil {
 		t.Errorf("Pool update failed %s", err)
 		return
 	}
-	t.Error("Just to force output")
+	//t.Error("Just to force output")
 }
 
 func TestAviPlugin(t *testing.T) {
@@ -118,5 +130,5 @@ func TestAviPlugin(t *testing.T) {
 		t.Errorf("Deleting insecure route failed %s", err)
 		return
 	}
-	t.Error("Just to force output")
+	//t.Error("Just to force output")
 }
