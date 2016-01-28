@@ -50,38 +50,20 @@ func NewAviPlugin(cfg AviPluginConfig) (*AviPlugin, error) {
 	return &AviPlugin{AviSess: avisess, AviConfig: cfg}, avisess.InitiateSession()
 }
 
-type AviResult struct {
-	count   int
-	results []map[string]interface{}
-}
-
-func convertAviResponseToAviResult(res interface{}) *AviResult {
-	resp := res.(map[string]interface{})
-	_results := resp["results"].([]interface{})
-	results := make([]map[string]interface{}, 0)
-	for _, res := range _results {
-		results = append(results, res.(map[string]interface{}))
-	}
-	return &AviResult{
-		count:   int(resp["count"].(float64)),
-		results: results,
-	}
-}
-
 // checks if pool exists: returns the pool, else some error
 func (p *AviPlugin) CheckPoolExists(poolname string) (bool, map[string]interface{}, error) {
 	var resp map[string]interface{}
 
-	res, err := p.AviSess.GetCollection("/api/pool?name=" + poolname)
+	cresp, err := p.AviSess.GetCollection("/api/pool?name=" + poolname)
 	if err != nil {
-		glog.V(4).Infof("Avi PoolExists check failed: %v", res)
+		glog.V(4).Infof("Avi PoolExists check failed: %v", cresp)
 		return false, resp, err
 	}
 
-	if res.Count == 0 {
+	if cresp.Count == 0 {
 		return false, resp, nil
 	}
-	nres, err := ConvertAviResponseToMapInterface(res.Results[0])
+	nres, err := ConvertAviResponseToMapInterface(cresp.Results[0])
 	if err != nil {
 		return true, resp, err
 	}
@@ -290,33 +272,37 @@ func routeName(route routeapi.Route) string {
 	return fmt.Sprintf("openshift_route_%s_%s", route.Namespace, route.Name)
 }
 
-func (p *AviPlugin) GetVirtualService() (map[string]interface{}, error) {
+func (p *AviPlugin) GetVirtualService(vsname string) (map[string]interface{}, error) {
 	resp := make(map[string]interface{})
-	res, err := p.AviSess.Get("/api/virtualservice?name=" + p.AviConfig.VSname)
+	res, err := p.AviSess.GetCollection("/api/virtualservice?name=" + vsname)
 	if err != nil {
 		glog.V(4).Infof("Avi VS Exists check failed: %v", res)
 		return resp, err
 	}
-	avires := convertAviResponseToAviResult(res)
 
-	if avires.count == 0 {
-		return resp, fmt.Errorf("Virtual Service %s needs to be created on Avi Controller first",
-			p.AviConfig.VSname)
+	if res.Count == 0 {
+		return resp, fmt.Errorf("Virtual Service %s does not exist on the Avi Controller",
+			vsname)
 	}
-	return avires.results[0], nil
+	nres, err := ConvertAviResponseToMapInterface(res.Results[0])
+	if err != nil {
+		glog.V(4).Infof("VS unmarshal failed: %v", string(res.Results[0]))
+		return resp, err
+	}
+	return nres.(map[string]interface{}), nil
 }
 
 func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, poolref, hostname,
 	pathname string) (map[string]interface{}, error) {
 	http_policy_set := make(map[string]interface{})
-	res, err := p.AviSess.Get("/api/httppolicyset?name=" + routename)
+	res, err := p.AviSess.GetCollection("/api/httppolicyset?name=" + routename)
 	if err != nil {
 		glog.V(4).Infof("Avi HTTP Policy Set Exists check failed: %v", res)
 		return http_policy_set, err
 	}
-	avires := convertAviResponseToAviResult(res)
 
-	if avires.count == 0 {
+	var nres interface{}
+	if res.Count == 0 {
 		jsonstr := `{
 		"name": "%s",
 		"http_request_policy": {"rules": [{"index": 1, "enable": true,
@@ -330,16 +316,19 @@ func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, poolref, hostname,
 		}`
 		jsonstr = fmt.Sprintf(jsonstr, routename, routename, pathname, hostname, poolref)
 		json.Unmarshal([]byte(jsonstr), &http_policy_set)
-		res, err = p.AviSess.Post("/api/httppolicyset", http_policy_set)
+		nres, err = p.AviSess.Post("/api/httppolicyset", http_policy_set)
 		if err != nil {
-			glog.V(4).Info("HTTP Policy Set creation failed: %v", res)
+			glog.V(4).Info("HTTP Policy Set creation failed: %v", nres)
 			return http_policy_set, err
 		}
-		http_policy_set = res.(map[string]interface{})
 	} else {
-		http_policy_set = avires.results[0]
+		nres, err = ConvertAviResponseToMapInterface(res.Results[0])
+		if err != nil {
+			glog.V(4).Info("Unmarshaling HTTP Policy Set failed: %v", string(res.Results[0]))
+			return http_policy_set, err
+		}
 	}
-	return http_policy_set, nil
+	return nres.(map[string]interface{}), nil
 }
 
 func hash(s string) uint32 {
@@ -349,7 +338,7 @@ func hash(s string) uint32 {
 }
 
 func (p *AviPlugin) AddPolicySet(http_policy_set map[string]interface{}, routename string) error {
-	vs, err := p.GetVirtualService()
+	vs, err := p.GetVirtualService(p.AviConfig.VSname)
 	if err != nil {
 		return err
 	}
@@ -367,7 +356,7 @@ func (p *AviPlugin) AddPolicySet(http_policy_set map[string]interface{}, routena
 
 	vs["http_policies"] = append(vs["http_policies"].([]interface{}),
 		map[string]interface{}{
-			"index":               hash(routename) & 0xffffff,
+			"index":               hash(routename) & 0x00ffffff,
 			"http_policy_set_ref": http_policy_set["url"].(string),
 		})
 	res, err := p.AviSess.Put("/api/virtualservice/"+vs["uuid"].(string), vs)
@@ -396,22 +385,25 @@ func (p *AviPlugin) AddInsecureRoute(routename, poolname, hostname, pathname str
 }
 
 func (p *AviPlugin) DeleteInsecureRoute(routename string) error {
-
-	http_policy_set := make(map[string]interface{})
-	res, err := p.AviSess.Get("/api/httppolicyset?name=" + routename)
+	var http_policy_set map[string]interface{}
+	cresp, err := p.AviSess.GetCollection("/api/httppolicyset?name=" + routename)
 	if err != nil {
-		glog.V(4).Infof("Avi HTTP Policy Set Exists check failed: %v", res)
+		glog.V(4).Infof("Avi HTTP Policy Set Exists check failed: %v", cresp)
 		return err
 	}
-	avires := convertAviResponseToAviResult(res)
 
-	if avires.count == 0 {
+	if cresp.Count == 0 {
 		glog.V(4).Infof("HTTP policy set does not exist!: %s", routename)
 		return nil
 	}
-	http_policy_set = avires.results[0]
+	iresp, err := ConvertAviResponseToMapInterface(cresp.Results[0])
+	http_policy_set = iresp.(map[string]interface{})
+	if err != nil {
+		glog.V(4).Infof("Could not parse http policy for route %s: %s", routename, string(cresp.Results[0]))
+		return err
+	}
 
-	vs, err := p.GetVirtualService()
+	vs, err := p.GetVirtualService(p.AviConfig.VSname)
 	if err != nil {
 		return err
 	}
@@ -439,7 +431,7 @@ func (p *AviPlugin) DeleteInsecureRoute(routename string) error {
 		glog.V(4).Infof("VS policy set is empty: %s", routename)
 	}
 
-	res, err = p.AviSess.Delete("/api/httppolicyset/" + http_policy_set["uuid"].(string))
+	iresp, err = p.AviSess.Delete("/api/httppolicyset/" + http_policy_set["uuid"].(string))
 	if err != nil {
 		return err
 	}
