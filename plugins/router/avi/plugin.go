@@ -292,6 +292,26 @@ func (p *AviPlugin) GetVirtualService(vsname string) (map[string]interface{}, er
 	return nres.(map[string]interface{}), nil
 }
 
+func (p *AviPlugin) GetResourceByName(resource, objname string) (map[string]interface{}, error) {
+	resp := make(map[string]interface{})
+	res, err := p.AviSess.GetCollection("/api/" + resource + "?name=" + objname)
+	if err != nil {
+		glog.V(4).Infof("Avi object exists check (res: %s, name: %s) failed: %v", resource, objname, res)
+		return resp, err
+	}
+
+	if res.Count == 0 {
+		return resp, fmt.Errorf("Resource name %s of type %s does not exist on the Avi Controller",
+			objname, resource)
+	}
+	nres, err := ConvertAviResponseToMapInterface(res.Results[0])
+	if err != nil {
+		glog.V(4).Infof("Resource unmarshal failed: %v", string(res.Results[0]))
+		return resp, err
+	}
+	return nres.(map[string]interface{}), nil
+}
+
 func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, poolref, hostname,
 	pathname string) (map[string]interface{}, error) {
 	http_policy_set := make(map[string]interface{})
@@ -439,6 +459,105 @@ func (p *AviPlugin) DeleteInsecureRoute(routename string) error {
 	return nil
 }
 
+func (p *AviPlugin) UploadCertAndKey(certname, certdata, keydata string) error {
+	data := map[string]interface{}{
+		"name": certname,
+		"certificate": certdata,
+		"key": keydata,
+	}
+	nres, err := p.AviSess.Post(
+		"/api/sslkeyandcertificate/importkeyandcertificate",
+		data,
+	)
+	if err != nil {
+		glog.V(4).Infof("Upload failed: %v", nres)
+		return err
+	}
+	return nil
+}
+
+func (p *AviPlugin) CreateChildVirtualService(routename, poolname, hostname, pathname, certname string) error {
+	pool, err := p.EnsurePoolExists(poolname)
+	if err != nil {
+		return err
+	}
+
+	pvs, err := p.GetVirtualService(p.AviConfig.VSname)
+	if err != nil {
+		return err
+	}
+
+	app_profile, err := p.GetResourceByName("applicationprofile", "System-Secure-HTTP")
+	if err != nil {
+		return err
+	}
+
+	if certname == "" {
+		certname = "System-Default-Cert"
+	}
+	ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", certname)
+	if err != nil {
+		return err
+	}
+
+	jsonstr := `{
+       "uri_path":"/api/virtualservice",
+       "model_name":"virtualservice",
+       "data":{
+         "network_profile_name":"System-TCP-Proxy",
+         "flow_dist":"LOAD_AWARE",
+         "delay_fairness":false,
+         "avi_allocated_vip":false,
+         "scaleout_ecmp":false,
+         "analytics_profile_name":"System-Analytics-Profile",
+         "cloud_type":"CLOUD_NONE",
+         "weight":1,
+         "cloud_name":"Default-Cloud",
+         "avi_allocated_fip":false,
+         "max_cps_per_client":0,
+         "type":"VS_TYPE_VH_CHILD",
+         "use_bridge_ip_as_vip":false,
+         "application_profile_ref":"%s",
+         "ign_pool_net_reach":true,
+         "east_west_placement":false,
+         "limit_doser":false,
+         "ssl_sess_cache_avg_size":1024,
+         "enable_autogw":true,
+         "auto_allocate_ip":false,
+         "enabled":true,
+         "analytics_policy":{
+           "client_insights":"ACTIVE",
+           "metrics_realtime_update":{
+             "duration":60,
+             "enabled":false},
+           "full_client_logs":{
+             "duration":30,
+             "enabled":false},
+           "client_log_filters":[],
+           "client_insights_sampling":{}
+         },
+         "vs_datascripts":[],
+         "vh_domain_name":["%s"],
+         "name":"%s",
+         "vh_parent_vs_ref":"%s",
+         "pool_ref":"%s",
+         "ssl_key_and_certificate_refs":[
+           "%s"
+         ]
+       }
+	}`
+	jsonstr = fmt.Sprintf(jsonstr, app_profile["url"], hostname, routename, pvs["url"],
+		pool["url"], ssl_cert["url"])
+	var vs interface{}
+	json.Unmarshal([]byte(jsonstr), &vs)
+	nres, err := p.AviSess.Post("/api/macro", vs)
+	if err != nil {
+		glog.V(4).Info("Child VS creation failed: %v", nres)
+		return err
+	}
+	return nil
+}
+
 func (p *AviPlugin) AddSecureRoute(routename, poolname, hostname, pathname string) error {
 	return nil
 }
@@ -481,11 +600,22 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 	} else if tls.Termination == routeapi.TLSTerminationPassthrough {
 		glog.V(4).Infof("Not supported yet")
 	} else {
-		glog.V(4).Infof("Not supported yet")
 		glog.V(4).Infof("Adding secure route %s for pool %s,"+
 			" hostname %s, pathname %s...",
 			routename, poolname, hostname, pathname)
-		return nil
+		err := p.UploadCertAndKey(routename, tls.CACertificate, tls.Key)
+		if err != nil {
+			glog.V(4).Infof("Error adding certificate for route %s: %v",
+				routename, err)
+			return err
+		}
+
+		err = p.CreateChildVirtualService(routename, poolname, hostname, pathname, routename)
+		if err != nil {
+			glog.V(4).Infof("Error creating child VS for secure route %s: %v",
+				routename, err)
+			return err
+		}
 	}
 
 	return nil
@@ -497,11 +627,35 @@ func (p *AviPlugin) deleteRoute(routename string) error {
 
 	// Start with the routes because we cannot delete the pool until we delete
 	// any associated profiles and rules.
-
-	err := p.DeleteInsecureRoute(routename)
+	pvs, err := p.GetVirtualService(routename)
 	if err != nil {
-		glog.V(4).Infof("Error deleting insecure route %s: %s.", routename, err)
-		return err
+		// must be an insecure route
+		err := p.DeleteInsecureRoute(routename)
+		if err != nil {
+			glog.V(4).Infof("Error deleting insecure route %s: %s.", routename, err)
+			return err
+		}
+	} else {
+		// secure route: delete child VS first and then the certificate
+
+		// delete child VS
+		iresp, err := p.AviSess.Delete("/api/virtualservice/" + pvs["uuid"].(string))
+		if err != nil {
+			glog.V(4).Infof("Error deleting vs %s: resp: %s, err: %s.", routename, iresp, err)
+			return err
+		}
+
+		//delete cert
+		ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", routename)
+		if err != nil {
+			return err
+		}
+
+		iresp, err = p.AviSess.Delete("/api/sslkeyandcertificate/" + ssl_cert["uuid"].(string))
+		if err != nil {
+			glog.V(4).Infof("Error deleting cert %s: resp: %s, err: %s.", routename, iresp, err)
+			return err
+		}
 	}
 	return nil
 }

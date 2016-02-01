@@ -4,7 +4,9 @@ import (
 	"log"
 	"reflect"
 	"testing"
-	//"time"
+	"io/ioutil"
+	routeapi "github.com/openshift/origin/pkg/route/api"
+    //"time"
 )
 
 func TestAviSession(t *testing.T) {
@@ -128,6 +130,38 @@ func TestAviPlugin(t *testing.T) {
 	err = avi.DeleteInsecureRoute("test")
 	if err != nil {
 		t.Errorf("Deleting insecure route failed %s", err)
+		return
+	}
+	//t.Error("Just to force output")
+}
+
+func TestSecureRoutes(t *testing.T) {
+	avi, err := NewAviPlugin(AviPluginConfig{
+		Host:     "10.10.25.201",
+		Username: "admin",
+		Password: "avi123",
+		Insecure: true,
+		VSname:   "openshift_router",
+	})
+	if err != nil {
+		t.Errorf("Creating plugin failed %s", err)
+		return
+	}
+	certdata, err := ioutil.ReadFile("./certs/acert")
+	keydata, err := ioutil.ReadFile("./certs/akey")
+	tls := routeapi.TLSConfig{
+		Termination: routeapi.TLSTerminationEdge,
+		CACertificate: string(certdata),
+		Key: string(keydata),
+	}
+	err = avi.addRoute("test", "test", "test.com", "", &tls)
+	if err != nil {
+		t.Errorf("Adding secure route failed %s", err)
+		return
+	}
+	err = avi.deleteRoute("test")
+	if err != nil {
+		t.Errorf("Deleting secure route failed %s", err)
 		return
 	}
 	//t.Error("Just to force output")
