@@ -279,7 +279,7 @@ os::build::create_gopath_tree() {
 os::build::setup_env() {
   os::build::create_gopath_tree
 
-  if [[ -z "$(which go)" ]]; then
+  if [[ -z "$(go version)" ]]; then
     cat <<EOF
 
 Can't find 'go' in PATH, please fix and retry.
