@@ -492,7 +492,7 @@ func (p *AviPlugin) CreateChildVirtualService(routename, poolname, hostname, pat
 		return err
 	}
 
-	if certname == "" {
+	if len(certname) == 0 {
 		certname = "System-Default-Cert"
 	}
 	ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", certname)
@@ -603,14 +603,18 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 		glog.V(4).Infof("Adding secure route %s for pool %s,"+
 			" hostname %s, pathname %s...",
 			routename, poolname, hostname, pathname)
-		err := p.UploadCertAndKey(routename, tls.CACertificate, tls.Key)
-		if err != nil {
-			glog.V(4).Infof("Error adding certificate for route %s: %v",
-				routename, err)
-			return err
+		var certname string
+		if len(tls.Certificate) > 0 && len(tls.Key) > 0 {
+			certname = routename
+			err := p.UploadCertAndKey(certname, tls.Certificate, tls.Key)
+			if err != nil {
+				glog.V(4).Infof("Error adding certificate for route %s: %v",
+					routename, err)
+				return err
+			}
 		}
 
-		err = p.CreateChildVirtualService(routename, poolname, hostname, pathname, routename)
+		err := p.CreateChildVirtualService(routename, poolname, hostname, pathname, certname)
 		if err != nil {
 			glog.V(4).Infof("Error creating child VS for secure route %s: %v",
 				routename, err)
@@ -645,10 +649,11 @@ func (p *AviPlugin) deleteRoute(routename string) error {
 			return err
 		}
 
-		//delete cert
+		//delete cert if it exists
 		ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", routename)
 		if err != nil {
-			return err
+			glog.V(4).Infof("Cert with name %s does not exist", routename)
+			return nil
 		}
 
 		iresp, err = p.AviSess.Delete("/api/sslkeyandcertificate/" + ssl_cert["uuid"].(string))
