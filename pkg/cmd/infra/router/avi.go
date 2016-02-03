@@ -3,6 +3,7 @@ package router
 import (
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -145,6 +146,6 @@ func (o *AviRouterOptions) Run() error {
 	factory := o.RouterSelection.NewFactory(oc, kc)
 	controller := factory.Create(plugin)
 	controller.Run()
-
+	http.ListenAndServe(":80", nil)
 	select {}
 }
