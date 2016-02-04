@@ -154,7 +154,7 @@ func TestSecureRoutes(t *testing.T) {
 		CACertificate: string(certdata),
 		Key: string(keydata),
 	}
-	err = avi.addRoute("test", "test", "test.com", "", &tls)
+	err = avi.addRoute("test", "test", "test.com", "", &tls, true)
 	if err != nil {
 		t.Errorf("Adding secure route failed %s", err)
 		return
