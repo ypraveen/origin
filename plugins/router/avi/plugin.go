@@ -330,6 +330,7 @@ func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, poolref, hostname,
 		"match_str": [{"str": "%s"}], "match_criteria": "BEGINS_WITH"},
 		"host_hdr": {"match_case": "INSENSITIVE",
 		"value": [{"str": "%s"}], "match_criteria": "HDR_EQUALS"}},
+		"vs_port": {"match_criteria": "IS_IN", "ports": [{"port": "80"}]},
 		"switching_action": {"action": "HTTP_SWITCHING_SELECT_POOL",
 		"status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_200",
 		"pool_ref": "%s"}}]}, "is_internal_policy": false
