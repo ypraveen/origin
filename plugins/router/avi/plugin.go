@@ -461,6 +461,15 @@ func (p *AviPlugin) DeleteInsecureRoute(routename string) error {
 }
 
 func (p *AviPlugin) UploadCertAndKey(certname, certdata, keydata string) error {
+	ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", certname)
+	if err != nil {
+		return err
+	}
+	ssl_cert = ssl_cert["certificate"].(map[string]interface{})
+	if ssl_cert["public_key"].(string) == keydata && ssl_cert["certificate"].(string) == certdata {
+		glog.V(4).Infof("Certificate already exists %s", certname)
+		return  nil
+	}
 	data := map[string]interface{}{
 		"name": certname,
 		"certificate": certdata,
@@ -501,6 +510,14 @@ func (p *AviPlugin) CreateChildVirtualService(routename, poolname, hostname, pat
 		return err
 	}
 
+	cvs, err := p.GetVirtualService(routename)
+	if err == nil {
+		// check if the existing vs has the right cert
+		if cvs["ssl_key_and_certificate_refs"].([]interface{})[0].(string) == ssl_cert["url"] {
+			glog.V(4).Infof("VS already exists %s", certname)
+			return  nil
+		}
+	}
 	jsonstr := `{
        "uri_path":"/api/virtualservice",
        "model_name":"virtualservice",
@@ -578,7 +595,7 @@ func (p *AviPlugin) AddSecureRoute(routename, poolname, hostname, pathname strin
 // addRoute creates route with the given name and parameters and of the suitable
 // type (insecure or secure) based on the given TLS configuration.
 func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
-	tls *routeapi.TLSConfig) error {
+	tls *routeapi.TLSConfig, modify bool) error {
 	glog.V(4).Infof("Adding route %s...", routename)
 
 	// We will use prettyPathname for log output.
@@ -588,6 +605,9 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 	}
 
 	if tls == nil || len(tls.Termination) == 0 {
+		if modify == true {
+			p.DeleteSecureRoute(routename)
+		}
 		glog.V(4).Infof("Adding insecure route %s for pool %s,"+
 			" hostname %s, pathname %s...",
 			routename, poolname, hostname, prettyPathname)
@@ -601,6 +621,9 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 	} else if tls.Termination == routeapi.TLSTerminationPassthrough {
 		glog.V(4).Infof("Not supported yet")
 	} else {
+		if modify == true {
+			p.DeleteInsecureRoute(routename)
+		}
 		glog.V(4).Infof("Adding secure route %s for pool %s,"+
 			" hostname %s, pathname %s...",
 			routename, poolname, hostname, pathname)
@@ -632,7 +655,7 @@ func (p *AviPlugin) deleteRoute(routename string) error {
 
 	// Start with the routes because we cannot delete the pool until we delete
 	// any associated profiles and rules.
-	pvs, err := p.GetVirtualService(routename)
+	_, err := p.GetVirtualService(routename)
 	if err != nil {
 		// must be an insecure route
 		err := p.DeleteInsecureRoute(routename)
@@ -642,26 +665,36 @@ func (p *AviPlugin) deleteRoute(routename string) error {
 		}
 	} else {
 		// secure route: delete child VS first and then the certificate
+		err := p.DeleteSecureRoute(routename)
+		if err != nil {
+			glog.V(4).Infof("Error deleting secure route %s: %s.", routename, err)
+			return err
+		}
+	}
+	return nil
+}
 
-		// delete child VS
+func (p *AviPlugin) DeleteSecureRoute(routename string) error {
+	// delete child VS
+	pvs, err := p.GetVirtualService(routename)
+	if err == nil {
 		iresp, err := p.AviSess.Delete("/api/virtualservice/" + pvs["uuid"].(string))
 		if err != nil {
 			glog.V(4).Infof("Error deleting vs %s: resp: %s, err: %s.", routename, iresp, err)
-			return err
 		}
+	}
 
-		//delete cert if it exists
-		ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", routename)
-		if err != nil {
-			glog.V(4).Infof("Cert with name %s does not exist", routename)
-			return nil
-		}
+	//delete cert if it exists
+	ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", routename)
+	if err != nil {
+		glog.V(4).Infof("Cert with name %s does not exist", routename)
+		return nil
+	}
 
-		iresp, err = p.AviSess.Delete("/api/sslkeyandcertificate/" + ssl_cert["uuid"].(string))
-		if err != nil {
-			glog.V(4).Infof("Error deleting cert %s: resp: %s, err: %s.", routename, iresp, err)
-			return err
-		}
+	iresp, err := p.AviSess.Delete("/api/sslkeyandcertificate/" + ssl_cert["uuid"].(string))
+	if err != nil {
+		glog.V(4).Infof("Error deleting cert %s: resp: %s, err: %s.", routename, iresp, err)
+		return err
 	}
 	return nil
 }
@@ -692,7 +725,7 @@ func (p *AviPlugin) HandleRoute(eventType watch.EventType,
 	switch eventType {
 	case watch.Modified:
 		glog.V(4).Infof("Updating route %s...", routename)
-
+		/*
 		err := p.deleteRoute(routename)
 		if err != nil {
 			return err
@@ -703,9 +736,9 @@ func (p *AviPlugin) HandleRoute(eventType watch.EventType,
 		_, err = p.EnsurePoolExists(poolname)
 		if err != nil {
 			return err
-		}
+		}*/
 
-		err = p.addRoute(routename, poolname, hostname, pathname, route.Spec.TLS)
+		err := p.addRoute(routename, poolname, hostname, pathname, route.Spec.TLS, true)
 		if err != nil {
 			return err
 		}
@@ -724,7 +757,7 @@ func (p *AviPlugin) HandleRoute(eventType watch.EventType,
 
 	case watch.Added:
 
-		err := p.addRoute(routename, poolname, hostname, pathname, route.Spec.TLS)
+		err := p.addRoute(routename, poolname, hostname, pathname, route.Spec.TLS, false)
 		if err != nil {
 			return err
 		}
