@@ -325,16 +325,31 @@ func (p *AviPlugin) EnsureHTTPPolicySetExists(routename, poolref, hostname,
 	if res.Count == 0 {
 		jsonstr := `{
 		"name": "%s",
-		"http_request_policy": {"rules": [{"index": 1, "enable": true,
-		"name": "%s", "match": {"path": {"match_case": "INSENSITIVE",
-		"match_str": [{"str": "%s"}], "match_criteria": "BEGINS_WITH"},
-		"host_hdr": {"match_case": "INSENSITIVE",
-		"value": [{"str": "%s"}], "match_criteria": "HDR_EQUALS"}},
-		"vs_port": {"match_criteria": "IS_IN", "ports": [{"port": "80"}]},
-		"switching_action": {"action": "HTTP_SWITCHING_SELECT_POOL",
-		"status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_200",
-		"pool_ref": "%s"}}]}, "is_internal_policy": false
-		}`
+		"http_request_policy": {
+		  "rules": [{
+		    "index": 1,
+		    "enable": true,
+		    "name": "%s",
+		    "match": {
+		      "path": {
+		        "match_case": "INSENSITIVE",
+		        "match_str": [{"str": "%s"}],
+		        "match_criteria": "BEGINS_WITH"},
+		      "host_hdr": {
+		        "match_case": "INSENSITIVE",
+		        "value": [{"str": "%s"}],
+		        "match_criteria": "HDR_EQUALS"},
+		      "vs_port": {
+		        "match_criteria": "IS_IN",
+		        "ports": [{"port": "80"}]}
+		    },
+		    "switching_action": {
+		      "action": "HTTP_SWITCHING_SELECT_POOL",
+		      "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_200",
+		      "pool_ref": "%s"}
+		  }]
+		},
+		"is_internal_policy": false}`
 		jsonstr = fmt.Sprintf(jsonstr, routename, routename, pathname, hostname, poolref)
 		json.Unmarshal([]byte(jsonstr), &http_policy_set)
 		nres, err = p.AviSess.Post("/api/httppolicyset", http_policy_set)
@@ -462,13 +477,12 @@ func (p *AviPlugin) DeleteInsecureRoute(routename string) error {
 
 func (p *AviPlugin) UploadCertAndKey(certname, certdata, keydata string) error {
 	ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", certname)
-	if err != nil {
-		return err
-	}
-	ssl_cert = ssl_cert["certificate"].(map[string]interface{})
-	if ssl_cert["public_key"].(string) == keydata && ssl_cert["certificate"].(string) == certdata {
-		glog.V(4).Infof("Certificate already exists %s", certname)
-		return  nil
+	if err == nil {
+		ssl_cert = ssl_cert["certificate"].(map[string]interface{})
+		if ssl_cert["public_key"].(string) == keydata && ssl_cert["certificate"].(string) == certdata {
+			glog.V(4).Infof("Certificate already exists %s", certname)
+			return nil
+		}
 	}
 	data := map[string]interface{}{
 		"name": certname,
