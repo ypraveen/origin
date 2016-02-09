@@ -209,6 +209,12 @@ func (avi *AviSession) rest_request(verb string, uri string, payload interface{}
 		return avi.rest_request(verb, uri, payload)
 	}
 
+	if resp.StatusCode == 401 && len(avi.sessionid) != 0 && uri != "login" {
+		// session expired; initiate session and then retry the request
+		avi.InitiateSession()
+		return avi.rest_request(verb, uri, payload)
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		log.Println("Error: ", resp)
 		return result, errorResult
