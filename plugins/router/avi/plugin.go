@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"strings"
 
 	"github.com/golang/glog"
 	kapi "k8s.io/kubernetes/pkg/api"
@@ -476,18 +477,19 @@ func (p *AviPlugin) DeleteInsecureRoute(routename string) error {
 }
 
 func (p *AviPlugin) UploadCertAndKey(certname, certdata, keydata string) error {
-	ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", certname)
+	ssl_cert, err := p.GetResourceByName("sslkeyandcertificate", certname)
 	if err == nil {
 		ssl_cert = ssl_cert["certificate"].(map[string]interface{})
-		if ssl_cert["public_key"].(string) == keydata && ssl_cert["certificate"].(string) == certdata {
+		r := strings.NewReplacer(" ", "", "\n", "", "\t", "", "\r", "")
+		if r.Replace(ssl_cert["certificate"].(string)) == r.Replace(certdata) {
 			glog.V(4).Infof("Certificate already exists %s", certname)
 			return nil
 		}
 	}
 	data := map[string]interface{}{
-		"name": certname,
+		"name":        certname,
 		"certificate": certdata,
-		"key": keydata,
+		"key":         keydata,
 	}
 	nres, err := p.AviSess.Post(
 		"/api/sslkeyandcertificate/importkeyandcertificate",
@@ -519,7 +521,7 @@ func (p *AviPlugin) CreateChildVirtualService(routename, poolname, hostname, pat
 	if len(certname) == 0 {
 		certname = "System-Default-Cert"
 	}
-	ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", certname)
+	ssl_cert, err := p.GetResourceByName("sslkeyandcertificate", certname)
 	if err != nil {
 		return err
 	}
@@ -529,7 +531,7 @@ func (p *AviPlugin) CreateChildVirtualService(routename, poolname, hostname, pat
 		// check if the existing vs has the right cert
 		if cvs["ssl_key_and_certificate_refs"].([]interface{})[0].(string) == ssl_cert["url"] {
 			glog.V(4).Infof("VS already exists %s", certname)
-			return  nil
+			return nil
 		}
 	}
 	jsonstr := `{
@@ -699,7 +701,7 @@ func (p *AviPlugin) DeleteSecureRoute(routename string) error {
 	}
 
 	//delete cert if it exists
-	ssl_cert, err :=  p.GetResourceByName("sslkeyandcertificate", routename)
+	ssl_cert, err := p.GetResourceByName("sslkeyandcertificate", routename)
 	if err != nil {
 		glog.V(4).Infof("Cert with name %s does not exist", routename)
 		return nil
@@ -739,18 +741,6 @@ func (p *AviPlugin) HandleRoute(eventType watch.EventType,
 	switch eventType {
 	case watch.Modified:
 		glog.V(4).Infof("Updating route %s...", routename)
-		/*
-		err := p.deleteRoute(routename)
-		if err != nil {
-			return err
-		}
-
-		// Ensure the pool exists in case we have been told to modify a route that
-		// did not already exist.
-		_, err = p.EnsurePoolExists(poolname)
-		if err != nil {
-			return err
-		}*/
 
 		err := p.addRoute(routename, poolname, hostname, pathname, route.Spec.TLS, true)
 		if err != nil {
