@@ -529,7 +529,7 @@ func (p *AviPlugin) CreateChildVirtualService(routename, poolname, hostname, pat
 	cvs, err := p.GetVirtualService(routename)
 	if err == nil {
 		// check if the existing vs has the right cert
-		if cvs["ssl_key_and_certificate_refs"].([]interface{})[0].(string) == ssl_cert["url"] {
+		if cvs["ssl_key_and_certificate_refs"].([]interface{})[0].(string) == ssl_cert["url"].(string) {
 			glog.V(4).Infof("VS already exists %s", certname)
 			return nil
 		}
@@ -592,6 +592,117 @@ func (p *AviPlugin) CreateChildVirtualService(routename, poolname, hostname, pat
 	return nil
 }
 
+func (p *AviPlugin) CreateSeparateVirtualService(routename, poolname, hostname, pathname, certname string) error {
+	pool, err := p.EnsurePoolExists(poolname)
+	if err != nil {
+		return err
+	}
+
+	ssl_app := false
+	if len(certname) > 0 {
+		ssl_app = true
+	}
+	ssl_cert := make(map[string]interface{})
+	if ssl_app {
+		if certname == "default" {
+			certname = "System-Default-Cert"
+		}
+		ssl_cert, err = p.GetResourceByName("sslkeyandcertificate", certname)
+		if err != nil {
+			return err
+		}
+	}
+
+	app_profile_name := "System-HTTP"
+	if ssl_app {
+		app_profile_name = "System-Secure-HTTP"
+	}
+	app_profile, err := p.GetResourceByName("applicationprofile", app_profile_name)
+	if err != nil {
+		return err
+	}
+
+	cvs, err := p.GetVirtualService(routename)
+	if err == nil {
+		service_port := int(cvs["services"].([]interface{})[0].(map[string]interface{})["port"].(float64))
+		if (ssl_app && service_port == 443 &&
+		    cvs["ssl_key_and_certificate_refs"].([]interface{})[0].(string) == ssl_cert["url"].(string)) {
+			glog.V(4).Infof("VS already exists %s", certname)
+			return nil
+		}
+		if !ssl_app && service_port == 80 {
+			return nil
+		}
+	}
+	jsonstr := `{
+       "uri_path":"/api/virtualservice",
+       "model_name":"virtualservice",
+       "data":{
+         "network_profile_name":"System-TCP-Proxy",
+         "flow_dist":"LOAD_AWARE",
+         "delay_fairness":false,
+         "avi_allocated_vip":false,
+         "scaleout_ecmp":false,
+         "analytics_profile_name":"System-Analytics-Profile",
+         "cloud_type":"CLOUD_NONE",
+         "weight":1,
+         "cloud_name":"Default-Cloud",
+         "avi_allocated_fip":false,
+         "max_cps_per_client":0,
+         "type":"VS_TYPE_NORMAL",
+         "use_bridge_ip_as_vip":false,
+         "ign_pool_net_reach":true,
+         "east_west_placement":false,
+         "limit_doser":false,
+         "ssl_sess_cache_avg_size":1024,
+         "enable_autogw":true,
+         "auto_allocate_ip":true,
+         "enabled":true,
+         "analytics_policy":{
+           "client_insights":"ACTIVE",
+           "metrics_realtime_update":{
+             "duration":60,
+             "enabled":false},
+           "full_client_logs":{
+             "duration":30,
+             "enabled":false},
+           "client_log_filters":[],
+           "client_insights_sampling":{}
+         },
+         "vs_datascripts":[],
+         "application_profile_ref":"%s",
+         "name":"%s",
+         "address":"%s",
+         "pool_ref":"%s",`
+	if ssl_app {
+		jsonstr += `
+         "ssl_key_and_certificate_refs":[
+           "%s"
+         ],`
+	}
+	jsonstr += `
+         "services": [{"port": %s, "enable_ssl": %s}]
+       }
+	}`
+
+	if !ssl_app {
+		jsonstr = fmt.Sprintf(jsonstr, app_profile["url"], routename, hostname,
+			pool["url"], "80", "false")
+	} else {
+		jsonstr = fmt.Sprintf(jsonstr, app_profile["url"], routename, hostname,
+			pool["url"], ssl_cert["url"], "443", "true")
+	}
+	var vs interface{}
+
+	json.Unmarshal([]byte(jsonstr), &vs)
+	nres, err := p.AviSess.Post("/api/macro", vs)
+	if err != nil {
+		glog.V(4).Info("Child VS creation failed: %v", nres)
+		return err
+	}
+	return nil
+}
+
 func (p *AviPlugin) AddSecureRoute(routename, poolname, hostname, pathname string) error {
 	return nil
 }
@@ -627,7 +738,8 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 		glog.V(4).Infof("Adding insecure route %s for pool %s,"+
 			" hostname %s, pathname %s...",
 			routename, poolname, hostname, prettyPathname)
-		err := p.AddInsecureRoute(routename, poolname, hostname, pathname)
+		err := p.CreateSeparateVirtualService(routename, poolname, hostname, pathname, "")
+		//err := p.AddInsecureRoute(routename, poolname, hostname, pathname)
 		if err != nil {
 			glog.V(4).Infof("Error adding insecure route for pool %s: %v", poolname,
 				err)
@@ -643,7 +755,7 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 		glog.V(4).Infof("Adding secure route %s for pool %s,"+
 			" hostname %s, pathname %s...",
 			routename, poolname, hostname, pathname)
-		var certname string
+		certname := "default"
 		if len(tls.Certificate) > 0 && len(tls.Key) > 0 {
 			certname = routename
 			err := p.UploadCertAndKey(certname, tls.Certificate, tls.Key)
@@ -654,7 +766,7 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 			}
 		}
 
-		err := p.CreateChildVirtualService(routename, poolname, hostname, pathname, certname)
+		err := p.CreateSeparateVirtualService(routename, poolname, hostname, pathname, certname)
 		if err != nil {
 			glog.V(4).Infof("Error creating child VS for secure route %s: %v",
 				routename, err)
