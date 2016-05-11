@@ -217,6 +217,11 @@ func (avi *AviSession) rest_request(verb string, uri string, payload interface{}
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		log.Println("Error: ", resp)
+		bres, berr := ioutil.ReadAll(resp.Body)
+		if berr == nil {
+		    mres, _ := ConvertAviResponseToMapInterface(bres)
+		    log.Println("Error resp: ", mres)
+		}
 		return result, errorResult
 	}
 

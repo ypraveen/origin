@@ -733,7 +733,7 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 
 	if tls == nil || len(tls.Termination) == 0 {
 		if modify == true {
-			p.DeleteSecureRoute(routename)
+			p.DeleteSSLCert(routename)
 		}
 		glog.V(4).Infof("Adding insecure route %s for pool %s,"+
 			" hostname %s, pathname %s...",
@@ -749,9 +749,6 @@ func (p *AviPlugin) addRoute(routename, poolname, hostname, pathname string,
 	} else if tls.Termination == routeapi.TLSTerminationPassthrough {
 		glog.V(4).Infof("Not supported yet")
 	} else {
-		if modify == true {
-			p.DeleteInsecureRoute(routename)
-		}
 		glog.V(4).Infof("Adding secure route %s for pool %s,"+
 			" hostname %s, pathname %s...",
 			routename, poolname, hostname, pathname)
@@ -802,6 +799,22 @@ func (p *AviPlugin) deleteRoute(routename string) error {
 	return nil
 }
 
+func (p *AviPlugin) DeleteSSLCert(certname string) error {
+	//delete cert if it exists
+	ssl_cert, err := p.GetResourceByName("sslkeyandcertificate", certname)
+	if err != nil {
+		glog.V(4).Infof("Cert with name %s does not exist", certname)
+		return nil
+	}
+
+	iresp, err := p.AviSess.Delete("/api/sslkeyandcertificate/" + ssl_cert["uuid"].(string))
+	if err != nil {
+		glog.V(4).Infof("Error deleting cert %s: resp: %s, err: %s.", certname, iresp, err)
+		return err
+	}
+	return nil
+}
+
 func (p *AviPlugin) DeleteSecureRoute(routename string) error {
 	// delete child VS
 	pvs, err := p.GetVirtualService(routename)
@@ -812,19 +825,7 @@ func (p *AviPlugin) DeleteSecureRoute(routename string) error {
 		}
 	}
 
-	//delete cert if it exists
-	ssl_cert, err := p.GetResourceByName("sslkeyandcertificate", routename)
-	if err != nil {
-		glog.V(4).Infof("Cert with name %s does not exist", routename)
-		return nil
-	}
-
-	iresp, err := p.AviSess.Delete("/api/sslkeyandcertificate/" + ssl_cert["uuid"].(string))
-	if err != nil {
-		glog.V(4).Infof("Error deleting cert %s: resp: %s, err: %s.", routename, iresp, err)
-		return err
-	}
-	return nil
+	return p.DeleteSSLCert(routename)
 }
 
 func (p *AviPlugin) HandleNamespaces(namespaces sets.String) error {
