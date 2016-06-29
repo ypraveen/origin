@@ -673,6 +673,7 @@ func (p *AviPlugin) CreateSeparateVirtualService(routename, poolname, hostname, 
          "application_profile_ref":"%s",
          "name":"%s",
          "address":"%s",
+         "fqdn": "%s",
          "pool_ref":"%s",`
 	if ssl_app {
 		jsonstr += `
@@ -687,10 +688,10 @@ func (p *AviPlugin) CreateSeparateVirtualService(routename, poolname, hostname, 
 
 	if !ssl_app {
 		jsonstr = fmt.Sprintf(jsonstr, app_profile["url"], routename, hostname,
-			pool["url"], "80", "false")
+			hostname, pool["url"], "80", "false")
 	} else {
 		jsonstr = fmt.Sprintf(jsonstr, app_profile["url"], routename, hostname,
-			pool["url"], ssl_cert["url"], "443", "true")
+			hostname, pool["url"], ssl_cert["url"], "443", "true")
 	}
 	var vs interface{}
 
