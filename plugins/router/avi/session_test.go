@@ -72,6 +72,7 @@ func TestAviPluginPoolFunctions(t *testing.T) {
 		Host:     "10.10.25.201",
 		Username: "admin",
 		Password: "avi123",
+		Cloudname: "Default-Cloud",
 		Insecure: true,
 	})
 	if err != nil {
@@ -116,6 +117,7 @@ func TestAviPlugin(t *testing.T) {
 		Username: "admin",
 		Password: "avi123",
 		Insecure: true,
+		Cloudname: "Default-Cloud",
 		VSname:   "openshift_router",
 	})
 	if err != nil {
@@ -140,6 +142,7 @@ func TestSecureRoutes(t *testing.T) {
 		Host:     "10.10.25.201",
 		Username: "admin",
 		Password: "avi123",
+		Cloudname: "Default-Cloud",
 		Insecure: true,
 		VSname:   "openshift_router",
 	})

@@ -43,6 +43,12 @@ type AviPluginConfig struct {
 
 	// virtual service to use for managing routes
 	VSname string
+
+	// cloud on avi controller
+	Cloudname string
+
+	// ref to cloud on avi controller -- determined from cloudname
+	Cloudref string
 }
 
 // NewAviPlugin makes a new avi router plugin.
@@ -71,10 +77,28 @@ func (p *AviPlugin) CheckPoolExists(poolname string) (bool, map[string]interface
 	return true, nres.(map[string]interface{}), nil
 }
 
+func (p *AviPlugin) GetCloudRef() (string, error) {
+	if p.AviConfig.Cloudname == "Default-Cloud" {
+		return "", nil
+	}
+	cloud, err := p.GetResourceByName("cloud", p.AviConfig.Cloudname)
+	if err != nil {
+		return "", err
+	}
+	return cloud["url"].(string), nil
+}
+
 func (p *AviPlugin) CreatePool(poolname string) (map[string]interface{}, error) {
 	var resp map[string]interface{}
 	pool := make(map[string]string)
 	pool["name"] = poolname
+	cref, err := p.GetCloudRef()
+	if err != nil {
+		return resp, err
+	}
+	if cref != "" {
+		pool["cloud_ref"] = cref
+	}
 	pres, err := p.AviSess.Post("/api/pool", pool)
 	if err != nil {
 		glog.V(4).Infof("Error creating pool %s: %v", poolname, pres)
@@ -646,7 +670,7 @@ func (p *AviPlugin) CreateSeparateVirtualService(routename, poolname, hostname, 
          "analytics_profile_name":"System-Analytics-Profile",
          "cloud_type":"CLOUD_NONE",
          "weight":1,
-         "cloud_name":"Default-Cloud",
+         "cloud_name":"%s",
          "avi_allocated_fip":false,
          "max_cps_per_client":0,
          "type":"VS_TYPE_NORMAL",
@@ -687,10 +711,14 @@ func (p *AviPlugin) CreateSeparateVirtualService(routename, poolname, hostname, 
 	}`
 
 	if !ssl_app {
-		jsonstr = fmt.Sprintf(jsonstr, app_profile["url"], routename, hostname,
+		jsonstr = fmt.Sprintf(jsonstr,
+			p.AviConfig.Cloudname,
+			app_profile["url"], routename, hostname,
 			hostname, pool["url"], "80", "false")
 	} else {
-		jsonstr = fmt.Sprintf(jsonstr, app_profile["url"], routename, hostname,
+		jsonstr = fmt.Sprintf(jsonstr,
+			p.AviConfig.Cloudname,
+			app_profile["url"], routename, hostname,
 			hostname, pool["url"], ssl_cert["url"], "443", "true")
 	}
 	var vs interface{}

@@ -53,6 +53,9 @@ type AviRouter struct {
 	// virtual service to use for managing routes
 	VSname string
 
+	// cloud on avi controller
+	Cloudname string
+
 	// Insecure specifies whether the Avi plugin should perform strict certificate
 	// validation for connections to the Avi Controller
 	Insecure bool
@@ -64,6 +67,7 @@ func (o *AviRouter) Bind(flag *pflag.FlagSet) {
 	flag.StringVar(&o.Username, "avi-username", util.Env("ROUTER_EXTERNAL_HOST_USERNAME", ""), "The username for Avi Controller")
 	flag.StringVar(&o.Password, "avi-password", util.Env("ROUTER_EXTERNAL_HOST_PASSWORD", ""), "The password for Avi Controller")
 	flag.StringVar(&o.VSname, "avi-vsname", util.Env("ROUTER_EXTERNAL_HOST_HTTP_VSERVER", "openshift-router"), "The virtual service for managing routes")
+	flag.StringVar(&o.Cloudname, "avi-cloudname", util.Env("ROUTER_EXTERNAL_PARTITION_PATH", "Default-Cloud"), "The Cloud to use on Avi Controller")
 	flag.BoolVar(&o.Insecure, "avi-insecure", util.Env("ROUTER_EXTERNAL_HOST_INSECURE", "") == "true", "Skip strict certificate verification")
 }
 
@@ -128,6 +132,7 @@ func (o *AviRouterOptions) Run() error {
 		Username:      o.Username,
 		Password:      o.Password,
 		VSname:        o.VSname,
+		Cloudname:     o.Cloudname,
 		Insecure:      o.Insecure,
 	}
 	aviPlugin, err := aviplugin.NewAviPlugin(cfg)
